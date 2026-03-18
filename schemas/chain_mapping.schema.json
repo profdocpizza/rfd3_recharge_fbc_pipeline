@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RFD3 to BC Chain Mapping",
+  "type": "object",
+  "required": ["input_chain_semantics", "output_chain_semantics", "residue_mapping"],
+  "properties": {
+    "input_chain_semantics": {
+      "type": "object",
+      "required": ["A", "B"],
+      "properties": {
+        "A": { "const": "binder" },
+        "B": { "const": "target" }
+      }
+    },
+    "output_chain_semantics": {
+      "type": "object",
+      "required": ["A", "B"],
+      "properties": {
+        "A": { "const": "target" },
+        "B": { "const": "binder" }
+      }
+    },
+    "residue_mapping": {
+      "type": "object",
+      "required": ["A_to_B", "B_to_A"],
+      "properties": {
+        "A_to_B": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "B_to_A": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,24 @@
+{
+  "target_id": "mega_target_001",
+  "hotspots": [
+    { "chain": "B", "residue": 105 },
+    { "chain": "B", "residue": 129 }
+  ],
+  "trimming": {
+    "radius_angstrom": 18.0,
+    "max_segments": 4
+  },
+  "rfd3": {
+    "num_designs": 100,
+    "seed": 42
+  },
+  "protein_recharge": {
+    "target_charge_min": -2.0,
+    "target_charge_max": 4.0
+  },
+  "freebindcraft": {
+    "pass1_mode": "full",
+    "revalidation_mode": "filter-only"
+  }
+}
+

@@ -1,0 +1,9 @@
+small_test:
+  dialect: 2
+  infer_ori_strategy: hotspots
+  input: hotspot_trim_output.pdb
+  contig: 20-30,/0,A1-40
+  select_hotspots:
+    A10: CA,CB
+    A20: CA,CB
+  is_non_loopy: true

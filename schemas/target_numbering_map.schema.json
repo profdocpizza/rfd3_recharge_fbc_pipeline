@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Target Numbering Map",
+  "type": "object",
+  "required": ["residue_map"],
+  "properties": {
+    "residue_map": {
+      "type": "object",
+      "properties": {
+        "B": {
+          "description": "Map from trimmed target residue id to original megastructure residue id.",
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "required": ["B"]
+    }
+  }
+}
+

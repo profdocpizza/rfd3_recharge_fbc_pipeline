@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Unified Design Record",
+  "type": "object",
+  "required": ["design_id"],
+  "properties": {
+    "design_id": { "type": "string" },
+    "target_id": { "type": "string" },
+    "trim_id": { "type": "string" },
+    "rfd3_score": { "type": ["number", "string", "null"] },
+    "fbc_pass1_score": { "type": ["number", "string", "null"] },
+    "fbc_revalidation_score": { "type": ["number", "string", "null"] },
+    "fbc_revalidation_pass": { "type": ["boolean", "string", "null"] },
+    "charge_net": { "type": ["number", "string", "null"] },
+    "mutation_count": { "type": ["integer", "string", "null"] }
+  }
+}
+

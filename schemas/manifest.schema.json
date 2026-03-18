@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Stage Manifest",
+  "type": "object",
+  "required": [
+    "stage",
+    "run_id",
+    "timestamp_utc",
+    "command",
+    "container",
+    "tool_version",
+    "inputs",
+    "outputs"
+  ],
+  "properties": {
+    "stage": { "type": "string" },
+    "run_id": { "type": "string" },
+    "timestamp_utc": { "type": "string" },
+    "command": { "type": "string" },
+    "container": { "type": "string" },
+    "tool_version": {
+      "type": "object",
+      "properties": {
+        "repo": { "type": "string" },
+        "git_sha": { "type": "string" },
+        "version": { "type": "string" }
+      },
+      "required": ["repo"]
+    },
+    "seed": { "type": ["integer", "null"] },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": { "type": "string" },
+          "sha256": { "type": "string" }
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": { "type": "string" },
+          "sha256": { "type": "string" }
+        }
+      }
+    },
+    "params": { "type": "object" }
+  }
+}
+

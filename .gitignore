@@ -1,0 +1,14 @@
+# Nextflow runtime artifacts
+.nextflow*
+work/
+results/
+
+# Python artifacts
+.venv/
+__pycache__/
+*.pyc
+
+# Local environment noise
+.DS_Store
+*.swp
+*.tmp

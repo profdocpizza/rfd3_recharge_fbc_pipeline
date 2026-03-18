@@ -1,0 +1,11 @@
+kinesin_hotspot:
+  dialect: 2
+  infer_ori_strategy: hotspots
+  input: hotspot_trim_output.pdb
+  # contig is in REMARKS of the trimmed target PDB.
+  contig: 80-150,/0,A1-5,A50-51,A54-56,A69-71,A88-93,A96-98,A104-135,A151-167,A189-200,A241-266,A355-357,A408-431,D211-216,D264-266,D271-276,D279-281,D283-315,D323-353,D371-374,D381-386,D429-439,E169-181,E184-186,E190-194,E203-232,E252-265,E269-278,E282-315,E325-351,E363-367,E371-391,E408-426,F10-12,F14-16,F65-77,F85-127,F132-134,F146-164,F183-198,F262-264,F385-418
+  select_hotspots:
+    A159: CG1,CG2
+    F106: OH
+    D339: NH1,NH2
+  is_non_loopy: true
