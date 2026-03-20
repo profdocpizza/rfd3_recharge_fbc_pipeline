@@ -5,7 +5,7 @@ process FREEBINDCRAFT_FILTERING {
   publishDir "${params.outdir}/debug/05_fbc_filtering", mode: 'copy', pattern: "debug/*"
 
   input:
-    tuple path(input_complex), path(recharged_sequence), path(hotspot_pdb)
+    tuple path(input_complexes), path(recharged_sequences), path(hotspot_pdb)
 
   output:
     path "fbc_filtering/*_fbc_filter_scores.csv", emit: fbc_filter_scores_tagged, optional: true
@@ -16,16 +16,36 @@ process FREEBINDCRAFT_FILTERING {
   script:
   """
   mkdir -p fbc_filtering debug
+  cat > debug/run_args.json <<EOF
+  {
+    "step": "FREEBINDCRAFT_FILTERING",
+    "work_dir": "\${PWD}",
+    "input_complexes": "${input_complexes}",
+    "recharged_sequences": "${recharged_sequences}",
+    "hotspot_pdb": "${hotspot_pdb}",
+    "binder_length": "${params.binder_length}",
+    "hotspot": "${params.hotspot}",
+    "settings": "${params.fbc_settings}",
+    "filters": "${params.fbc_filters}",
+    "advanced": "${params.fbc_advanced}",
+    "freebindcraft_cmd": "${params.freebindcraft_cmd}",
+    "outdir": "fbc_filtering"
+  }
+EOF
   ${params.freebindcraft_cmd} \\
     --mode filter-only \\
-    --input-complex ${input_complex} \\
-    --recharged-sequence ${recharged_sequence} \\
+    --input-complex-dir . \\
+    --recharged-sequence-dir . \\
     --hotspot-pdb ${hotspot_pdb} \\
     --binder-length "${params.binder_length}" \\
-    --hotspot "${params.hotspot}" \\
+    --hotspot "" \\
     --settings "${params.fbc_settings}" \\
     --filters "${params.fbc_filters}" \\
     --advanced "${params.fbc_advanced}" \\
     --outdir fbc_filtering > debug/freebindcraft_filtering.log 2>&1
+
+  if [[ -d fbc_filtering/debug ]]; then
+    cp -r fbc_filtering/debug/* debug/ || true
+  fi
   """
 }

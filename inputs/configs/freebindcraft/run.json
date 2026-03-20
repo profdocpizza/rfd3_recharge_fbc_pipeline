@@ -1,8 +1,8 @@
 {
     "design_path": ".",
-    "binder_name": "RFD3_KH_binders",
-    "starting_pdb": "/home/tadas/code/startup_lanternfish_binders/inputs/TUBB4B_TUBA1A/hexamer/hotspot_selector/TUBB4B_TUBA1A_hexamer_Kinesin_hotspot.pdb",
-    "chains": "A,B,C,D",
+    "binder_name": "some_random_name",
+    "starting_pdb": "/path/to/target/pdb.pdb",
+    "chains": "A,B,C,D,E,F,G,H",
     "target_hotspot_residues": "",
     "lengths": [
         80,

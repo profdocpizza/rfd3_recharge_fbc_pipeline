@@ -12,6 +12,32 @@ def run(cmd, cwd=None):
     subprocess.run(cmd, check=True, cwd=cwd)
 
 
+def can_import_pandas_in_env(env_name: str) -> bool:
+    try:
+        subprocess.run(
+            ["conda", "run", "-n", env_name, "python", "-c", "import pandas"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
+def pick_recharge_env(preferred_env: str) -> str | None:
+    candidates = []
+    if preferred_env:
+        candidates.append(preferred_env)
+    for fallback in ["recharge_env", "tadas311", "ligandmpnn_env"]:
+        if fallback not in candidates:
+            candidates.append(fallback)
+    for env_name in candidates:
+        if can_import_pandas_in_env(env_name):
+            return env_name
+    return None
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--input-complex", required=True)
@@ -29,13 +55,25 @@ def main():
     cfg.setdefault("redesign_chain", "B")
     cfg.setdefault("ligandmpnn_run_py", "/home/tadas/code/LigandMPNN/run.py")
     cfg.setdefault("ligandmpnn_conda_env", "ligandmpnn_env")
+    cfg.setdefault("protein_recharge_conda_env", "recharge_env")
     desired_charge = cfg.get("desired_chain_charge", None)
 
     generated_cfg = outdir / f"{did}_recharge_runtime.yaml"
     generated_cfg.write_text(yaml.safe_dump(cfg, sort_keys=False))
 
     repo = Path("/home/tadas/code/ProteinRecharge")
-    run(["python", "recharge.py", str(generated_cfg.resolve())], cwd=repo)
+    preferred_env = str(cfg.get("protein_recharge_conda_env") or "").strip()
+    recharge_env = pick_recharge_env(preferred_env)
+    if not recharge_env:
+        raise RuntimeError(
+            "No conda environment with pandas found for ProteinRecharge. "
+            f"Tried: {preferred_env or '(none)'}, recharge_env, tadas311, ligandmpnn_env."
+        )
+
+    run(
+        ["conda", "run", "-n", recharge_env, "python", "recharge.py", str(generated_cfg.resolve())],
+        cwd=repo,
+    )
 
     selection = outdir / "selection"
     fasta_files = sorted(selection.glob(f"{did}*_recharged.fasta")) or sorted(selection.glob("*_recharged.fasta"))
@@ -49,6 +87,15 @@ def main():
     debug_dir = outdir / "debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(generated_cfg, debug_dir / generated_cfg.name)
+    (debug_dir / "protein_recharge_env.json").write_text(
+        json.dumps(
+            {
+                "preferred_env": preferred_env,
+                "selected_env": recharge_env,
+            },
+            indent=2,
+        )
+    )
     for f in check_files:
         shutil.copyfile(f, debug_dir / f.name)
 

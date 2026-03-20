@@ -2,16 +2,30 @@ process FREEBINDCRAFT_MERGE {
   label 'small'
   container params.container_aggregate
   publishDir "${params.outdir}/05_fbc_filtering", mode: 'copy'
+  publishDir "${params.outdir}/debug/05_fbc_filtering", mode: 'copy', pattern: "debug/*"
 
   input:
     path tagged_scores
 
   output:
     path "merged/fbc_filter_scores.csv", emit: fbc_filter_scores
+    path "debug/*", emit: debug_files
 
   script:
   """
-  mkdir -p merged
+  mkdir -p merged debug
+  python - <<'PY'
+import json
+from pathlib import Path
+files = sorted(str(p) for p in Path(".").glob("*_fbc_filter_scores.csv"))
+Path("debug/run_args.json").write_text(json.dumps({
+  "step": "FREEBINDCRAFT_MERGE",
+  "work_dir": str(Path.cwd()),
+  "tagged_scores_glob": "*_fbc_filter_scores.csv",
+  "tagged_scores_files": files,
+  "output": "merged/fbc_filter_scores.csv"
+}, indent=2))
+PY
   python - <<'PY'
 import csv
 from pathlib import Path

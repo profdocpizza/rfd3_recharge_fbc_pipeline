@@ -6,16 +6,39 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from collections import defaultdict
 
 import yaml
 from Bio.PDB import MMCIFParser, PDBIO
 
 
+# Residue type → important atom names (for hotspot selection constraints)
+RESIDUE_ATOM_MAP = {
+    "ARG": "NH1,NH2",  # Arginine - guanidinium group
+    "ASP": "OD1,OD2",  # Aspartate - carboxyl oxygens
+    "ASN": "OD1,ND2",  # Asparagine - amide group
+    "GLU": "OE1,OE2",  # Glutamate - carboxyl oxygens
+    "GLN": "OE1,NE2",  # Glutamine - amide group
+    "HIS": "ND1,NE2",  # Histidine - imidazole nitrogens
+    "LYS": "NZ",       # Lysine - amino group
+    "SER": "OG",       # Serine - hydroxyl oxygen
+    "THR": "OG1",      # Threonine - hydroxyl oxygen
+    "TYR": "OH",       # Tyrosine - phenol oxygen
+    "CYS": "SG",       # Cysteine - thiol sulfur
+    "TRP": "NE1",      # Tryptophan - indole nitrogen
+}
+
+
 def run(cmd):
     subprocess.run(cmd, check=True)
 
+def write_json(path: Path, payload: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2))
+
 
 def collect_residues(pdb_path: Path):
+    """Collect residues and their types from PDB."""
     residues = {}
     for line in pdb_path.read_text().splitlines():
         if not line.startswith(("ATOM", "HETATM")):
@@ -25,8 +48,22 @@ def collect_residues(pdb_path: Path):
             resi = int(line[22:26])
         except ValueError:
             continue
-        residues.setdefault(chain, set()).add(resi)
-    return {k: sorted(v) for k, v in residues.items()}
+        resname = line[17:20].strip()
+        key = (chain, resi)
+        if key not in residues:
+            residues[key] = {"chain": chain, "resi": resi, "resname": resname}
+    
+    # Group by chain for backwards compatibility
+    by_chain = defaultdict(set)
+    for (chain, resi), info in residues.items():
+        by_chain[chain].add(resi)
+    
+    return {k: sorted(v) for k, v in by_chain.items()}, residues
+
+
+def get_atoms_for_residue(resname: str) -> str:
+    """Get important atoms for a residue type, default to CA if not found."""
+    return RESIDUE_ATOM_MAP.get(resname, "CA")
 
 
 def contiguous_segments(vals):
@@ -50,30 +87,54 @@ def main():
     p.add_argument("--hotspots", required=True)
     p.add_argument("--config", default=None)
     p.add_argument("--outdir", required=True)
-    p.add_argument("--num-designs", type=int, default=3)
+    p.add_argument("--num-designs", type=int, default=2)
+    p.add_argument("--rfd3-env", default="rfd3")
     p.add_argument("--binder-length", required=True)
     p.add_argument("--hotspot", required=True)
     args = p.parse_args()
+    if args.num_designs <= 0:
+        raise ValueError("--num-designs must be a positive integer.")
+    diffusion_batch_size = 1
+    n_batches = args.num_designs
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     run_dir = outdir / "rfd3_raw"
     run_dir.mkdir(parents=True, exist_ok=True)
-
-    if shutil.which("rfd3") is None:
-        raise RuntimeError(
-            "rfd3 CLI not found in PATH. Install rc-foundry[rfd3] and checkpoints."
-        )
+    process_debug_dir = outdir.parent / "debug"
+    process_debug_dir.mkdir(parents=True, exist_ok=True)
 
     if not args.config:
         raise ValueError("RFD3 wrapper requires --config YAML path.")
 
-    config_in = yaml.safe_load(Path(args.config).read_text())
+    cfg_path = Path(args.config)
+    cfg_exists = cfg_path.exists()
+    cfg_size = cfg_path.stat().st_size if cfg_exists else None
+
+    write_json(process_debug_dir / "rfd3_wrapper_invocation.json", {
+        "target": str(Path(args.target).resolve()),
+        "hotspots": str(Path(args.hotspots).resolve()),
+        "config": str(cfg_path.resolve()),
+        "config_exists": cfg_exists,
+        "config_size_bytes": cfg_size,
+        "outdir": str(outdir.resolve()),
+        "num_designs": args.num_designs,
+        "n_batches": n_batches,
+        "diffusion_batch_size": diffusion_batch_size,
+        "rfd3_env": args.rfd3_env,
+        "binder_length": args.binder_length,
+        "hotspot": args.hotspot,
+    })
+
+    config_in = yaml.safe_load(cfg_path.read_text())
     if not isinstance(config_in, dict) or not config_in:
         raise ValueError("RFD3 config must contain at least one design entry.")
     first_key = next(iter(config_in.keys()))
     entry = config_in[first_key] or {}
     entry["input"] = str(Path(args.target).resolve())
+    entry.setdefault("is_non_loopy", True)
+    entry.setdefault("infer_ori_strategy", "hotspots")
+    entry.setdefault("dialect", 2)
 
     hotspot_meta = json.loads(Path(args.hotspots).read_text())
     target_contig = (hotspot_meta.get("target_contig") or "").strip()
@@ -87,14 +148,31 @@ def main():
         entry["contig"] = f"{args.binder_length},/0,{target_contig}"
         anchors = args.hotspot.split() if args.hotspot else hotspot_meta.get("anchors") or []
         if anchors:
-            entry["select_hotspots"] = {
-                a.replace(":", ""): "CA,CB" for a in anchors if ":" in a
-            }
+            # Load residue info to map residue types to important atoms
+            _, res_info = collect_residues(Path(args.target))
+            select_hotspots = {}
+            for anchor in anchors:
+                if ":" in anchor:
+                    chain, resi_str = anchor.split(":")
+                    try:
+                        resi = int(resi_str)
+                        key = (chain, resi)
+                        if key in res_info:
+                            resname = res_info[key]["resname"]
+                            atoms = get_atoms_for_residue(resname)
+                            select_hotspots[anchor.replace(":", "")] = atoms
+                        else:
+                            # Fallback if residue not found
+                            select_hotspots[anchor.replace(":", "")] = "CA"
+                    except ValueError:
+                        pass
+            if select_hotspots:
+                entry["select_hotspots"] = select_hotspots
     else:
-        residues = collect_residues(Path(args.target))
+        by_chain, res_info = collect_residues(Path(args.target))
         best_chain = None
         best_seg = None
-        for chain, vals in residues.items():
+        for chain, vals in by_chain.items():
             for seg in contiguous_segments(vals):
                 if seg[1] - seg[0] + 1 >= 20:
                     best_chain = chain
@@ -110,24 +188,48 @@ def main():
         hs1 = seg_start + (seg_end - seg_start) // 3
         hs2 = seg_start + 2 * (seg_end - seg_start) // 3
         entry["contig"] = f"{args.binder_length},/0,{best_chain}{seg_start}-{seg_end}"
+        
+        # Get residue types for automatic atom selection
+        hs1_key = (best_chain, hs1)
+        hs2_key = (best_chain, hs2)
+        hs1_atoms = get_atoms_for_residue(res_info[hs1_key]["resname"]) if hs1_key in res_info else "CA"
+        hs2_atoms = get_atoms_for_residue(res_info[hs2_key]["resname"]) if hs2_key in res_info else "CA"
+        
         entry["select_hotspots"] = {
-            f"{best_chain}{hs1}": "CA,CB",
-            f"{best_chain}{hs2}": "CA,CB",
+            f"{best_chain}{hs1}": hs1_atoms,
+            f"{best_chain}{hs2}": hs2_atoms,
         }
 
     normalized = {first_key: entry}
     run_cfg = outdir / "rfd3_runtime.yaml"
     run_cfg.write_text(yaml.safe_dump(normalized, sort_keys=False))
+    write_json(process_debug_dir / "rfd3_wrapper_pre_run.json", {
+        "runtime_config_path": str(run_cfg.resolve()),
+        "resolved_design_key": first_key,
+        "resolved_design_entry": entry,
+        "hotspot_meta_path": str(Path(args.hotspots).resolve()),
+        "hotspot_meta": hotspot_meta,
+        "target_contig": target_contig,
+    })
 
     cmd = [
+        "conda",
+        "run",
+        "-n",
+        args.rfd3_env,
         "rfd3",
         "design",
         f"out_dir={run_dir}",
         f"inputs={run_cfg}",
+        f"n_batches={n_batches}",
+        f"diffusion_batch_size={diffusion_batch_size}",
         "skip_existing=False",
         "prevalidate_inputs=True",
         "dump_trajectories=False",
     ]
+    write_json(process_debug_dir / "rfd3_design_command.json", {
+        "command": cmd
+    })
     run(cmd)
 
     designs = []

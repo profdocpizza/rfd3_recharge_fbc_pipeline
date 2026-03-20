@@ -90,6 +90,41 @@ def parse_first_fasta_sequence(path: Path) -> str:
     return seq
 
 
+def design_id_from_complex(path: Path) -> str:
+    return path.stem.replace("_recharge_reference", "").replace("_standardized", "")
+
+
+def design_id_from_sequence(path: Path) -> str:
+    return path.stem.replace("_recharged", "")
+
+
+def collect_design_pairs(args):
+    if args.input_complex_dir:
+        complex_files = sorted(Path(args.input_complex_dir).glob("*_standardized.pdb"))
+    elif args.input_complex:
+        complex_files = [Path(args.input_complex)]
+    else:
+        complex_files = []
+
+    if args.recharged_sequence_dir:
+        seq_files = sorted(Path(args.recharged_sequence_dir).glob("*_recharged.fasta"))
+    elif args.recharged_sequence:
+        seq_files = [Path(args.recharged_sequence)]
+    else:
+        seq_files = []
+
+    seq_by_id = {p.stem.replace("_recharged", ""): p for p in seq_files}
+    pairs = []
+    for complex_path in complex_files:
+        design_id = design_id_from_complex(complex_path)
+        seq_path = seq_by_id.get(design_id)
+        if seq_path:
+            pairs.append((complex_path.resolve(), seq_path.resolve(), design_id))
+    if not pairs:
+        raise RuntimeError("No matched *_standardized.pdb / *_recharged.fasta pairs found for filtering.")
+    return pairs
+
+
 def copy_mpnn_to_outputs(outdir: Path, debug_dir: Path):
     """Preserve full MPNN artifacts and return all MPNN pdb files."""
     src_candidates = []
@@ -117,11 +152,13 @@ def copy_mpnn_to_outputs(outdir: Path, debug_dir: Path):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--mode", choices=["full", "filter-only"], required=True)
-    p.add_argument("--input-complex", required=True)
+    p.add_argument("--input-complex", required=False, default=None)
     p.add_argument("--recharged-sequence", required=False, default=None)
+    p.add_argument("--input-complex-dir", required=False, default=None)
+    p.add_argument("--recharged-sequence-dir", required=False, default=None)
     p.add_argument("--hotspot-pdb", required=False, default=None)
     p.add_argument("--binder-length", required=True)
-    p.add_argument("--hotspot", required=True)
+    p.add_argument("--hotspot", required=False, default="")
     p.add_argument("--pass1-scores", default=None)
     p.add_argument("--outdir", required=True)
     p.add_argument(
@@ -141,26 +178,23 @@ def main():
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     repo = Path("/home/tadas/code/FreeBindCraft")
-    design_id = (
-        Path(args.input_complex).stem
-        .replace("_recharge_reference", "")
-        .replace("_standardized", "")
-    )
+    design_id = "batch"
     runtime = outdir / "runtime"
     runtime.mkdir(parents=True, exist_ok=True)
     debug_dir = outdir / "debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
-    if args.recharged_sequence and Path(args.recharged_sequence).exists():
-        shutil.copyfile(args.recharged_sequence, debug_dir / Path(args.recharged_sequence).name)
 
-    hotspot_pdb = Path(args.hotspot_pdb).resolve() if args.hotspot_pdb else Path(args.input_complex).resolve()
+    pairs = collect_design_pairs(args)
+    first_complex = pairs[0][0]
+    hotspot_pdb = Path(args.hotspot_pdb).resolve() if args.hotspot_pdb else first_complex
+
     target_chains = parse_chain_ids(hotspot_pdb)
     target_chain_spec = ",".join(target_chains) if target_chains else "A"
-    binder_len = max(8, count_residues(Path(args.input_complex), "B"))
-    hotspot_for_fbc = normalize_hotspot_tokens(args.hotspot)
+    binder_len = max(8, count_residues(first_complex, "B"))
+    hotspot_for_fbc = "" if args.mode == "filter-only" else normalize_hotspot_tokens(args.hotspot)
     settings = json.loads(Path(args.settings).read_text()) if Path(args.settings).exists() else {}
     settings["design_path"] = str(outdir.resolve())
-    settings["binder_name"] = Path(args.input_complex).stem
+    settings["binder_name"] = design_id
     settings["starting_pdb"] = str(hotspot_pdb)
     settings["chains"] = target_chain_spec
     settings["target_hotspot_residues"] = hotspot_for_fbc
@@ -172,22 +206,43 @@ def main():
     settings["number_of_final_designs"] = settings.get("number_of_final_designs", 1)
     settings_path = runtime / "settings.json"
     settings_path.write_text(json.dumps(settings, indent=2))
+    (debug_dir / "effective_settings.json").write_text(json.dumps(settings, indent=2))
 
     steps = "filtering"
     relaxed = outdir / "Trajectory" / "Relaxed"
     relaxed.mkdir(parents=True, exist_ok=True)
-    stamp = int(time.time() * 1000) % 100000
-    relaxed_stem = f"{Path(args.input_complex).stem}_l{binder_len}_s{stamp:05d}"
-    relaxed_name = f"{relaxed_stem}.pdb"
-    relaxed_pdb = relaxed / relaxed_name
-    shutil.copyfile(args.input_complex, relaxed_pdb)
+    mpnn_seq_dir = outdir / "MPNN" / "Sequences"
+    mpnn_seq_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.recharged_sequence and Path(args.recharged_sequence).exists():
-        mpnn_seq_dir = outdir / "MPNN" / "Sequences"
-        mpnn_seq_dir.mkdir(parents=True, exist_ok=True)
-        seq = parse_first_fasta_sequence(Path(args.recharged_sequence))
-        seq_out = mpnn_seq_dir / f"{relaxed_stem}_mpnn1.fasta"
-        seq_out.write_text(f">{relaxed_stem}_mpnn1\n{seq}\n")
+    prepared = []
+    for i, (complex_path, seq_path, pair_id) in enumerate(pairs):
+        shutil.copyfile(seq_path, debug_dir / seq_path.name)
+        stamp = (int(time.time() * 1000) + i) % 100000
+        pair_len = max(8, count_residues(complex_path, "B"))
+        suffix = f"_l{pair_len}_s{stamp:05d}"
+        design_stem = f"{pair_id}{suffix}"
+        relaxed_pdb = relaxed / f"{design_stem}.pdb"
+        shutil.copyfile(complex_path, relaxed_pdb)
+        seq = parse_first_fasta_sequence(seq_path)
+        # FreeBindCraft filtering expects <trajectory_stem>.fasta for each Relaxed pdb.
+        seq_out = mpnn_seq_dir / f"{design_stem}.fasta"
+        seq_out.write_text(f">{design_stem}\n{seq}\n")
+        # Keep legacy alias for compatibility with old readers.
+        seq_out_mpnn1 = mpnn_seq_dir / f"{design_stem}_mpnn1.fasta"
+        seq_out_mpnn1.write_text(f">{design_stem}_mpnn1\n{seq}\n")
+        prepared.append(
+            {
+                "design_id": pair_id,
+                "complex": str(complex_path),
+                "sequence": str(seq_path),
+                "design_stem": design_stem,
+                "fbc_sequence_file": str(seq_out),
+                "stamp": f"{stamp:05d}",
+                "binder_length": pair_len,
+            }
+        )
+
+    (debug_dir / "prepared_pairs.json").write_text(json.dumps(prepared, indent=2))
 
     cmd = [
         "python",
@@ -201,6 +256,25 @@ def main():
         "--no-pyrosetta",
         "--steps", steps,
     ]
+    (debug_dir / "freebindcraft_runtime_args.json").write_text(
+        json.dumps(
+            {
+                "mode": args.mode,
+                "work_dir": str(outdir.resolve()),
+                "bindcraft_script": str((repo / "bindcraft.py").resolve()),
+                "starting_pdb": settings.get("starting_pdb"),
+                "chains": settings.get("chains"),
+                "binder_name": settings.get("binder_name"),
+                "target_hotspot_residues": settings.get("target_hotspot_residues"),
+                "lengths": settings.get("lengths"),
+                "settings_file": str(settings_path.resolve()),
+                "filters_file": str(Path(args.filters).resolve()),
+                "advanced_file": str(Path(args.advanced).resolve()),
+                "command": cmd,
+            },
+            indent=2,
+        )
+    )
     run(cmd, cwd=outdir)
 
     score = find_first(

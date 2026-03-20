@@ -16,6 +16,15 @@ process DASHBOARD_DATA {
   script:
   """
   mkdir -p dashboard debug
+  cat > debug/run_args.json <<EOF
+  {
+    "step": "DASHBOARD_DATA",
+    "work_dir": "\${PWD}",
+    "aggregate_csv": "${aggregate_csv}",
+    "aggregate_json": "${aggregate_json}",
+    "outputs": ["dashboard/candidates.csv", "dashboard/candidates.json"]
+  }
+EOF
   cp ${aggregate_csv} dashboard/candidates.csv
   cp ${aggregate_json} dashboard/candidates.json
   echo "dashboard export complete" > debug/dashboard_data.log

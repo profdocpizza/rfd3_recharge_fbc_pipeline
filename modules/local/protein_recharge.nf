@@ -20,6 +20,16 @@ process PROTEIN_RECHARGE {
   if [[ -f "${params.recharge_config}" && -s "${params.recharge_config}" ]]; then
     RECHARGE_CONFIG_ARG="--config ${params.recharge_config}"
   fi
+  cat > debug/run_args.json <<EOF
+  {
+    "step": "PROTEIN_RECHARGE",
+    "work_dir": "\${PWD}",
+    "input_complex": "${standardized_complex}",
+    "recharge_config_arg": "\${RECHARGE_CONFIG_ARG}",
+    "protein_recharge_cmd": "${params.protein_recharge_cmd}",
+    "outdir": "recharge"
+  }
+EOF
 
   ${params.protein_recharge_cmd} \\
     --input-complex ${standardized_complex} \\

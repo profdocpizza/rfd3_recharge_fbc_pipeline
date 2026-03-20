@@ -1,0 +1,4 @@
+/home/tadas/code/rfd3_recharge_fbc_pipeline/examples/example_binder_design_kinesin/RUN_INTERFACE_A_HOTSPOT.sh
+/home/tadas/code/rfd3_recharge_fbc_pipeline/examples/example_binder_design_kinesin/RUN_INTERFACE_B_HOTSPOT.sh
+/home/tadas/code/rfd3_recharge_fbc_pipeline/examples/example_binder_design_kinesin/RUN_INTERFACE_V_HOTSPOT.sh
+/home/tadas/code/rfd3_recharge_fbc_pipeline/examples/example_binder_design_kinesin/RUN_KINESIN_HOTSPOT.sh

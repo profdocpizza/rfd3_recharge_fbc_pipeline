@@ -8,7 +8,7 @@ Nextflow DSL2 pipeline (active dev mode), with reusable step wrappers and debug 
 2. `RFD3_DESIGN`
 3. `RFD3_TO_BC_ADAPTER`
 4. `PROTEIN_RECHARGE`
-5. `FREEBINDCRAFT_FILTERING` (`--steps filtering`)
+5. `FREEBINDCRAFT_FILTERING` (`--steps freebindcraft_filtering`)
 6. `FREEBINDCRAFT_MERGE` (merges per-design FBC score CSVs)
 7. `MUTANT_ZOO`
 8. `AGGREGATE_METRICS`
@@ -83,6 +83,13 @@ Install each tool in its env per upstream docs.
 - `--binder_length` (example: `"80-150"`)
 - `--hotspot` (example: `"A:159 F:106 E:307 D:337 B:405"`)
 
+Optional hotspot trim override:
+
+- `--hotspot_trimming_residues` (same format as `--hotspot`)
+- `--max_residues` (optional cap on hotspot residues selected by `01_hotspot_trim`)
+- Used only by `01_hotspot_trim`
+- If omitted, `01_hotspot_trim` uses `--hotspot`
+
 ## Full run command (dev mode)
 
 ```bash
@@ -92,13 +99,22 @@ cd ~/code/RFD3_FBC_binder_design
   --run_id debug_run_full \
   --target_pdb "$(pwd)/inputs/targets/TUBB4B_TUBA1A_hexamer.pdb" \
   --binder_length "80-150" \
+  --num_designs 2 \
   --hotspot "A:159 F:106 E:307 D:337 B:405" \
+  --hotspot_trimming_residues "A:159 F:106" \
   --hotspot_selector_cmd "conda run -n hotspot_env python $(pwd)/scripts/tool_wrappers/hotspot_selector_wrapper.py" \
-  --rfd3_cmd "conda run -n rfd3_env python $(pwd)/scripts/tool_wrappers/rfd3_wrapper.py --num-designs 2" \
+  --rfd3_cmd "conda run -n rfd3_env python $(pwd)/scripts/tool_wrappers/rfd3_wrapper.py" \
   --protein_recharge_cmd "conda run -n recharge_env python $(pwd)/scripts/tool_wrappers/protein_recharge_wrapper.py" \
   --freebindcraft_cmd "conda run -n FreeBindCraft python $(pwd)/scripts/tool_wrappers/freebindcraft_wrapper.py" \
   --mutant_zoo_cmd "conda run -n mutantzoo_env python $(pwd)/scripts/tool_wrappers/mutant_zoo_wrapper.py"
 ```
+
+`--num_designs` is required and is passed through to RFD3 as `--num-designs`.
+
+RFD3 generation behavior:
+
+- `diffusion_batch_size=1` (fixed)
+- `n_batches = --num-designs`
 
 ## Rerun only adapter → recharge → FBC (overwrite)
 
@@ -136,9 +152,15 @@ python /home/tadas/code/FreeBindCraft/bindcraft.py \
   --settings <runtime settings.json> \
   --filters <default_filters.json> \
   --advanced <default_4stage_multimer.json> \
-  --steps filtering
+  --steps freebindcraft_filtering
 ```
 
 Pipeline output for FBC is a single merged score file:
 
 - `results/<run_id>/05_fbc_filtering/merged/fbc_filter_scores.csv`
+
+`--steps` supports comma-separated chains, for example:
+
+```bash
+--steps "rfd3_to_bc_adapter,protein_recharge,freebindcraft_filtering"
+```

@@ -18,6 +18,17 @@ process AGGREGATE_METRICS {
   script:
   """
   mkdir -p aggregate debug
+  cat > debug/run_args.json <<EOF
+  {
+    "step": "AGGREGATE_METRICS",
+    "work_dir": "\${PWD}",
+    "rfd3_scores": "${rfd3_scores}",
+    "fbc_filter_scores": "${fbc_filter_scores}",
+    "charge_report": "${charge_report}",
+    "mutation_sets": "${mutation_sets}",
+    "outputs": ["aggregate/candidates.csv", "aggregate/candidates.json"]
+  }
+EOF
   python - <<'PY'
 import csv
 import json

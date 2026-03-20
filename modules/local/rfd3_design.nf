@@ -21,10 +21,25 @@ process RFD3_DESIGN {
   if [[ -f "${params.rfd3_config}" && -s "${params.rfd3_config}" ]]; then
     RFD3_CONFIG_ARG="--config ${params.rfd3_config}"
   fi
+  cat > debug/run_args.json <<EOF
+  {
+    "step": "RFD3_DESIGN",
+    "work_dir": "\${PWD}",
+    "target": "${trimmed_pdb}",
+    "hotspots_metadata": "${hotspot_metadata}",
+    "binder_length": "${params.binder_length}",
+    "hotspot": "${params.hotspot}",
+    "num_designs": "${params.num_designs}",
+    "rfd3_config_arg": "\${RFD3_CONFIG_ARG}",
+    "rfd3_cmd": "${params.rfd3_cmd}",
+    "outdir": "rfd3"
+  }
+EOF
 
   ${params.rfd3_cmd} \\
     --target ${trimmed_pdb} \\
     --hotspots ${hotspot_metadata} \\
+    --num-designs ${params.num_designs} \\
     --binder-length "${params.binder_length}" \\
     --hotspot "${params.hotspot}" \\
     \${RFD3_CONFIG_ARG} \\

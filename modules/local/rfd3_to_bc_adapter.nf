@@ -16,6 +16,17 @@ process RFD3_TO_BC_ADAPTER {
   """
   mkdir -p adapter debug
   base_name=\$(basename "${rfd3_complex}" .pdb)
+  cat > debug/run_args.json <<EOF
+  {
+    "step": "RFD3_TO_BC_ADAPTER",
+    "work_dir": "\${PWD}",
+    "input_pdb": "${rfd3_complex}",
+    "target_numbering_map": "${target_numbering_map}",
+    "adapter_script": "${params.adapter_script}",
+    "output_pdb": "adapter/\${base_name}_standardized.pdb",
+    "output_chain_map": "adapter/\${base_name}_chain_mapping.json"
+  }
+EOF
   python ${params.adapter_script} \\
     --input-pdb ${rfd3_complex} \\
     --target-numbering-map ${target_numbering_map} \\
