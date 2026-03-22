@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+ALA_COMPATIBLE_ATOMS = {"N", "CA", "C", "O", "OXT", "CB"}
+
 
 @dataclass(frozen=True)
 class ResidueKey:
@@ -27,8 +29,20 @@ def parse_xyz(line: str) -> Tuple[float, float, float]:
     return (float(line[30:38]), float(line[38:46]), float(line[46:54]))
 
 
-def format_atom_line(line: str, chain: str, resseq: int, icode: str) -> str:
-    return f"{line[:21]}{chain}{resseq:4d}{icode}{line[27:]}"
+def get_resname(line: str) -> str:
+    return line[17:20].strip()
+
+
+def get_atom_name(line: str) -> str:
+    return line[12:16].strip()
+
+
+def format_atom_line(line: str, resname: str, chain: str, resseq: int, icode: str) -> str:
+    return f"{line[:17]}{resname:>3}{line[20:21]}{chain}{resseq:4d}{icode}{line[27:]}"
+
+
+def format_ter_line(line: str, resname: str, chain: str, resseq: int, icode: str) -> str:
+    return f"{line[:17]}{resname:>3}{line[20:21]}{chain}{resseq:4d}{icode}{line[27:]}"
 
 
 def collect_residue_order(lines: List[str]) -> List[ResidueKey]:
@@ -124,23 +138,37 @@ def rewrite_pdb(
 ) -> Tuple[List[str], Dict[str, Dict[str, str]]]:
     rewritten: List[str] = []
     residue_map: Dict[str, Dict[str, str]] = {"A_to_B": {}, "B_to_A": {}}
+    last_residue_context: Optional[Tuple[str, str, int, str]] = None
 
     for line in lines:
         parsed = parse_atom_line(line)
         if parsed is None:
+            if line.startswith("TER") and last_residue_context is not None:
+                resname, chain, resseq, icode = last_residue_context
+                rewritten.append(format_ter_line(line, resname, chain, resseq, icode))
+                continue
             rewritten.append(line)
             continue
         old_key, atom_line = parsed
         new_chain, new_resseq, new_icode = mapping[old_key]
         old_repr = f"{old_key.resseq}{old_key.icode.strip()}"
         new_repr = f"{new_resseq}{new_icode.strip()}"
+        old_resname = get_resname(atom_line)
 
         if old_key.chain == "A":
-            residue_map["A_to_B"][old_repr] = new_repr
+            residue_map["A_to_B"].setdefault(old_repr, new_repr)
         elif old_key.chain == "B":
-            residue_map["B_to_A"][old_repr] = new_repr
+            residue_map["B_to_A"].setdefault(old_repr, new_repr)
 
-        rewritten.append(format_atom_line(atom_line, new_chain, new_resseq, new_icode))
+        if old_resname == "UNK" and get_atom_name(atom_line) not in ALA_COMPATIBLE_ATOMS:
+            last_residue_context = ("ALA", new_chain, new_resseq, new_icode)
+            continue
+
+        new_resname = "ALA" if old_resname == "UNK" else old_resname
+        last_residue_context = (new_resname, new_chain, new_resseq, new_icode)
+        rewritten.append(
+            format_atom_line(atom_line, new_resname, new_chain, new_resseq, new_icode)
+        )
     return rewritten, residue_map
 
 
