@@ -5,6 +5,8 @@ import gzip
 import shutil
 import subprocess
 import tempfile
+import time
+import sys
 from pathlib import Path
 from collections import defaultdict
 
@@ -29,8 +31,61 @@ RESIDUE_ATOM_MAP = {
 }
 
 
-def run(cmd):
-    subprocess.run(cmd, check=True)
+def parse_bool(value: str) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def run(cmd, max_retries=0, retry_delay_seconds=30, log_path: Path | None = None):
+    attempts = max_retries + 1
+    if log_path:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+    for attempt in range(1, attempts + 1):
+        attempt_log = None
+        if log_path:
+            attempt_log = log_path.parent / f"rfd3_design_attempt_{attempt}.tmp.log"
+            attempt_log.write_text("")
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+            )
+            assert proc.stdout is not None
+            with open(log_path, "ab", buffering=0) if log_path else open("/dev/null", "wb") as live_f:
+                with open(attempt_log, "ab", buffering=0) if attempt_log else open("/dev/null", "wb") as attempt_f:
+                    while True:
+                        chunk = proc.stdout.read(4096)
+                        if not chunk:
+                            break
+                        live_f.write(chunk)
+                        live_f.flush()
+                        attempt_f.write(chunk)
+                        attempt_f.flush()
+                        sys.stdout.buffer.write(chunk)
+                        sys.stdout.buffer.flush()
+            rc = proc.wait()
+            if rc != 0:
+                raise subprocess.CalledProcessError(rc, cmd)
+            if attempt_log and attempt_log.exists():
+                attempt_log.unlink(missing_ok=True)
+            return
+        except subprocess.CalledProcessError as e:
+            if log_path and attempt_log and attempt_log.exists():
+                crash_copy = log_path.parent / f"rfd3_design_{attempt}.log"
+                shutil.copyfile(attempt_log, crash_copy)
+                attempt_log.unlink(missing_ok=True)
+            if attempt >= attempts:
+                raise e
+            msg = (
+                f"[rfd3_wrapper] attempt {attempt}/{attempts} failed; "
+                f"retrying in {retry_delay_seconds}s\n"
+            )
+            print(msg, flush=True)
+            if log_path:
+                with open(log_path, "a") as f:
+                    f.write(msg)
+            time.sleep(retry_delay_seconds)
 
 def write_json(path: Path, payload: dict):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -91,11 +146,19 @@ def main():
     p.add_argument("--rfd3-env", default="rfd3")
     p.add_argument("--binder-length", required=True)
     p.add_argument("--hotspot", required=True)
+    p.add_argument("--max-retries", type=int, default=20)
+    p.add_argument("--retry-delay-seconds", type=int, default=30)
+    p.add_argument("--skip-existing", default="true")
     args = p.parse_args()
     if args.num_designs <= 0:
         raise ValueError("--num-designs must be a positive integer.")
+    if args.max_retries < 0:
+        raise ValueError("--max-retries must be >= 0.")
+    if args.retry_delay_seconds < 0:
+        raise ValueError("--retry-delay-seconds must be >= 0.")
     diffusion_batch_size = 1
     n_batches = args.num_designs
+    skip_existing = parse_bool(args.skip_existing)
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -124,6 +187,9 @@ def main():
         "rfd3_env": args.rfd3_env,
         "binder_length": args.binder_length,
         "hotspot": args.hotspot,
+        "max_retries": args.max_retries,
+        "retry_delay_seconds": args.retry_delay_seconds,
+        "skip_existing": skip_existing,
     })
 
     config_in = yaml.safe_load(cfg_path.read_text())
@@ -215,22 +281,30 @@ def main():
     cmd = [
         "conda",
         "run",
+        "--no-capture-output",
         "-n",
         args.rfd3_env,
+        "env",
+        "PYTHONUNBUFFERED=1",
         "rfd3",
         "design",
         f"out_dir={run_dir}",
         f"inputs={run_cfg}",
         f"n_batches={n_batches}",
         f"diffusion_batch_size={diffusion_batch_size}",
-        "skip_existing=False",
+        f"skip_existing={'True' if skip_existing else 'False'}",
         "prevalidate_inputs=True",
         "dump_trajectories=False",
     ]
     write_json(process_debug_dir / "rfd3_design_command.json", {
         "command": cmd
     })
-    run(cmd)
+    run(
+        cmd,
+        max_retries=args.max_retries,
+        retry_delay_seconds=args.retry_delay_seconds,
+        log_path=process_debug_dir / "rfd3_retry.log",
+    )
 
     designs = []
     produced = sorted(run_dir.rglob("*.pdb"))

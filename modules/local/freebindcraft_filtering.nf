@@ -39,10 +39,13 @@ EOF
     --hotspot-pdb ${hotspot_pdb} \\
     --binder-length "${params.binder_length}" \\
     --hotspot "" \\
+    --max-retries ${params.fbc_max_retries} \\
+    --retry-delay-seconds ${params.fbc_retry_delay_seconds} \\
+    --reuse "${params.fbc_reuse}" \\
     --settings "${params.fbc_settings}" \\
     --filters "${params.fbc_filters}" \\
     --advanced "${params.fbc_advanced}" \\
-    --outdir fbc_filtering > debug/freebindcraft_filtering.log 2>&1
+    --outdir fbc_filtering
 
   if [[ -d fbc_filtering/debug ]]; then
     cp -r fbc_filtering/debug/* debug/ || true

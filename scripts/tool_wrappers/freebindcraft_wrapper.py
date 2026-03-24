@@ -5,11 +5,97 @@ import csv
 import shutil
 import subprocess
 import time
+import sys
+import os
 from pathlib import Path
 
 
-def run(cmd, cwd=None):
-    subprocess.run(cmd, check=True, cwd=cwd)
+def run(cmd, cwd=None, log_path: Path | None = None, attempt_log_path: Path | None = None):
+    """
+    Run command and persist combined stdout/stderr to a log file while streaming
+    to the wrapper stdout so Nextflow-level logs still receive the same output.
+    """
+    env = dict(**os.environ)
+    env["PYTHONUNBUFFERED"] = "1"
+
+    if log_path:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+    if attempt_log_path:
+        attempt_log_path.parent.mkdir(parents=True, exist_ok=True)
+    with (open(log_path, "ab", buffering=0) if log_path else open(os.devnull, "wb")) as log_f:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+            env=env,
+        )
+        assert proc.stdout is not None
+        with (open(attempt_log_path, "ab", buffering=0) if attempt_log_path else open(os.devnull, "wb")) as attempt_f:
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                if log_path:
+                    log_f.write(chunk)
+                    log_f.flush()
+                if attempt_log_path:
+                    attempt_f.write(chunk)
+                    attempt_f.flush()
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.flush()
+
+        rc = proc.wait()
+        if rc != 0:
+            msg = f"\n[freebindcraft_wrapper] Command failed with exit code {rc}: {' '.join(cmd)}\n"
+            if log_path:
+                log_f.write(msg.encode("utf-8", errors="replace"))
+                log_f.flush()
+            sys.stdout.write(msg)
+            sys.stdout.flush()
+            raise subprocess.CalledProcessError(rc, cmd)
+
+def parse_bool(value: str) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def run_with_retries(
+    cmd,
+    cwd=None,
+    log_path: Path | None = None,
+    max_retries: int = 20,
+    retry_delay_seconds: int = 30,
+):
+    attempts = max_retries + 1
+    for attempt in range(1, attempts + 1):
+        attempt_log = None
+        if log_path:
+            attempt_log = log_path.parent / f"freebindcraft_filtering_attempt_{attempt}.tmp.log"
+            attempt_log.write_text("")
+        try:
+            run(cmd, cwd=cwd, log_path=log_path, attempt_log_path=attempt_log)
+            if attempt_log and attempt_log.exists():
+                attempt_log.unlink(missing_ok=True)
+            return
+        except subprocess.CalledProcessError:
+            if log_path and attempt_log and attempt_log.exists():
+                crash_copy = log_path.parent / f"freebindcraft_filtering_{attempt}.log"
+                shutil.copyfile(attempt_log, crash_copy)
+                attempt_log.unlink(missing_ok=True)
+            if attempt >= attempts:
+                raise
+            msg = (
+                f"[freebindcraft_wrapper] attempt {attempt}/{attempts} failed; "
+                f"retrying in {retry_delay_seconds}s\n"
+            )
+            if log_path:
+                with open(log_path, "ab", buffering=0) as log_f:
+                    log_f.write(msg.encode("utf-8", errors="replace"))
+                    log_f.flush()
+            sys.stdout.write(msg)
+            sys.stdout.flush()
+            time.sleep(retry_delay_seconds)
 
 
 def find_first(path: Path, names):
@@ -173,7 +259,15 @@ def main():
         "--advanced",
         default="/home/tadas/code/RFD3_FBC_binder_design/inputs/configs/freebindcraft/default_4stage_multimer.json",
     )
+    p.add_argument("--max-retries", type=int, default=20)
+    p.add_argument("--retry-delay-seconds", type=int, default=30)
+    p.add_argument("--reuse", default="true")
     args = p.parse_args()
+    if args.max_retries < 0:
+        raise ValueError("--max-retries must be >= 0.")
+    if args.retry_delay_seconds < 0:
+        raise ValueError("--retry-delay-seconds must be >= 0.")
+    reuse = parse_bool(args.reuse)
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -246,6 +340,7 @@ def main():
 
     cmd = [
         "python",
+        "-u",
         str((repo / "bindcraft.py").resolve()),
         "--settings",
         str(settings_path.resolve()),
@@ -256,6 +351,8 @@ def main():
         "--no-pyrosetta",
         "--steps", steps,
     ]
+    if reuse:
+        cmd.append("--reuse")
     (debug_dir / "freebindcraft_runtime_args.json").write_text(
         json.dumps(
             {
@@ -270,12 +367,28 @@ def main():
                 "settings_file": str(settings_path.resolve()),
                 "filters_file": str(Path(args.filters).resolve()),
                 "advanced_file": str(Path(args.advanced).resolve()),
+                "max_retries": args.max_retries,
+                "retry_delay_seconds": args.retry_delay_seconds,
+                "reuse": reuse,
                 "command": cmd,
             },
             indent=2,
         )
     )
-    run(cmd, cwd=outdir)
+    pipeline_live_log = outdir.parent / "debug" / "freebindcraft_filtering.log"
+    with open(pipeline_live_log, "ab", buffering=0) as log_f:
+        log_f.write(
+            b"[freebindcraft_wrapper] Starting FreeBindCraft program execution.\n"
+        )
+        log_f.flush()
+
+    run_with_retries(
+        cmd,
+        cwd=outdir,
+        log_path=pipeline_live_log,
+        max_retries=args.max_retries,
+        retry_delay_seconds=args.retry_delay_seconds,
+    )
 
     score = find_first(
         outdir,

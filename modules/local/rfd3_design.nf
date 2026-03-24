@@ -42,7 +42,10 @@ EOF
     --num-designs ${params.num_designs} \\
     --binder-length "${params.binder_length}" \\
     --hotspot "${params.hotspot}" \\
+    --max-retries ${params.rfd3_max_retries} \\
+    --retry-delay-seconds ${params.rfd3_retry_delay_seconds} \\
+    --skip-existing "${params.rfd3_skip_existing}" \\
     \${RFD3_CONFIG_ARG} \\
-    --outdir rfd3 > debug/rfd3_design.log 2>&1
+    --outdir rfd3
   """
 }

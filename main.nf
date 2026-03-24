@@ -68,52 +68,60 @@ workflow {
 
   def rfd3DesignsCh
   def rfd3ScoresCh
-  if (stepEnabled(steps, 'rfd3_design')) {
-    RFD3_DESIGN(trimmedPdbCh, hotspotMetaCh)
-    rfd3DesignsCh = RFD3_DESIGN.out.designed_complexes.flatten()
-    rfd3ScoresCh = RFD3_DESIGN.out.rfd3_scores
-  } else {
-    rfd3DesignsCh = stepPath("02_rfd3/rfd3/*.pdb").flatten()
-    rfd3ScoresCh = stepPath("02_rfd3/rfd3/score_metadata.json")
+  if (maxRequestedIndex >= 1) {
+    if (stepEnabled(steps, 'rfd3_design')) {
+      RFD3_DESIGN(trimmedPdbCh, hotspotMetaCh)
+      rfd3DesignsCh = RFD3_DESIGN.out.designed_complexes.flatten()
+      rfd3ScoresCh = RFD3_DESIGN.out.rfd3_scores
+    } else {
+      rfd3DesignsCh = stepPath("02_rfd3/rfd3/*.pdb").flatten()
+      rfd3ScoresCh = stepPath("02_rfd3/rfd3/score_metadata.json")
+    }
   }
 
-  adapter_input_ch = rfd3DesignsCh
-    .combine(targetMapCh)
-    .map { row -> tuple(row[0], row[1]) }
+  def standardizedComplexesCh = null
+  if (maxRequestedIndex >= 2) {
+    adapter_input_ch = rfd3DesignsCh
+      .combine(targetMapCh)
+      .map { row -> tuple(row[0], row[1]) }
 
-  def standardizedComplexesCh
-  if (stepEnabled(steps, 'rfd3_to_bc_adapter')) {
-    RFD3_TO_BC_ADAPTER(adapter_input_ch)
-    standardizedComplexesCh = RFD3_TO_BC_ADAPTER.out.standardized_complexes.flatten()
-  } else {
-    standardizedComplexesCh = stepPath("03_adapter/adapter/*_standardized.pdb").flatten()
+    if (stepEnabled(steps, 'rfd3_to_bc_adapter')) {
+      RFD3_TO_BC_ADAPTER(adapter_input_ch)
+      standardizedComplexesCh = RFD3_TO_BC_ADAPTER.out.standardized_complexes.flatten()
+    } else {
+      standardizedComplexesCh = stepPath("03_adapter/adapter/*_standardized.pdb").flatten()
+    }
   }
 
-  def rechargedSeqCh
-  def chargeReportCh
-  if (stepEnabled(steps, 'protein_recharge')) {
-    PROTEIN_RECHARGE(standardizedComplexesCh)
-    rechargedSeqCh = PROTEIN_RECHARGE.out.recharged_sequences.flatten()
-    chargeReportCh = PROTEIN_RECHARGE.out.charge_report
-  } else {
-    rechargedSeqCh = stepPath("04_protein_recharge/recharge/*_recharged.fasta").flatten()
-    chargeReportCh = stepPath("04_protein_recharge/recharge/charge_report.json")
+  def rechargedSeqCh = null
+  def chargeReportCh = null
+  if (maxRequestedIndex >= 3) {
+    if (stepEnabled(steps, 'protein_recharge')) {
+      PROTEIN_RECHARGE(standardizedComplexesCh)
+      rechargedSeqCh = PROTEIN_RECHARGE.out.recharged_sequences.flatten()
+      chargeReportCh = PROTEIN_RECHARGE.out.charge_report
+    } else {
+      rechargedSeqCh = stepPath("04_protein_recharge/recharge/*_recharged.fasta").flatten()
+      chargeReportCh = stepPath("04_protein_recharge/recharge/charge_report.json")
+    }
   }
 
-  fbc_complexes_batch_ch = standardizedComplexesCh.collect().map { tuple('batch', it) }
-  fbc_sequences_batch_ch = rechargedSeqCh.collect().map { tuple('batch', it) }
-  fbc_hotspot_batch_ch = trimmedPdbCh.first().map { tuple('batch', it) }
-  fbc_input_ch = fbc_complexes_batch_ch
-    .join(fbc_sequences_batch_ch)
-    .join(fbc_hotspot_batch_ch)
-    .map { id, complexes, sequences, hotspot -> tuple(complexes, sequences, hotspot) }
+  def fbcTaggedScoresCh = null
+  if (maxRequestedIndex >= 4) {
+    fbc_complexes_batch_ch = standardizedComplexesCh.collect().map { tuple('batch', it) }
+    fbc_sequences_batch_ch = rechargedSeqCh.collect().map { tuple('batch', it) }
+    fbc_hotspot_batch_ch = trimmedPdbCh.first().map { tuple('batch', it) }
+    fbc_input_ch = fbc_complexes_batch_ch
+      .join(fbc_sequences_batch_ch)
+      .join(fbc_hotspot_batch_ch)
+      .map { id, complexes, sequences, hotspot -> tuple(complexes, sequences, hotspot) }
 
-  def fbcTaggedScoresCh
-  if (stepEnabled(steps, 'freebindcraft_filtering')) {
-    FREEBINDCRAFT_FILTERING(fbc_input_ch)
-    fbcTaggedScoresCh = FREEBINDCRAFT_FILTERING.out.fbc_filter_scores_tagged.collect()
-  } else {
-    fbcTaggedScoresCh = stepPath("05_fbc_filtering/fbc_filtering/*_fbc_filter_scores.csv").collect()
+    if (stepEnabled(steps, 'freebindcraft_filtering')) {
+      FREEBINDCRAFT_FILTERING(fbc_input_ch)
+      fbcTaggedScoresCh = FREEBINDCRAFT_FILTERING.out.fbc_filter_scores_tagged.collect()
+    } else {
+      fbcTaggedScoresCh = stepPath("05_fbc_filtering/fbc_filtering/*_fbc_filter_scores.csv").collect()
+    }
   }
 
   def mergedFbcScoresCh = null
